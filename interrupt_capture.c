@@ -12,16 +12,17 @@
 struct data_type {
     struct timespec timestamp;
     pthread_t thread_id;
-    }
+    };
 
 struct data_type buffer[SIZE];
 
 int InputIDX = 0;
 int cnt = 0;
 int WriteCNT = 0;
+pthread_mutex_t lock;
 
 // Define input Thread
-void* inputThread(void* input) {
+void* inputThread(void* var) {
     // Taking the argument
     char* input = (char*) var;
     FILE* fp = fopen(input, "r");
@@ -91,7 +92,7 @@ void* inputThread(void* input) {
 }
 
     // Define output thread
-void outputThread(void * input){
+void outputThread(void * var){
     // Taking the argument
     char* input = (char*) var;
     FILE* txt = fopen(input, "r+");
@@ -126,11 +127,7 @@ void outputThread(void * input){
     
     // Critical Section - End 
     pthread_mutex_unlock(&lock); 
-
-    else {
-        printf("Failed to open LED brightness file\n");
-    }
-    fclose(fp);
+    fclose(txt);
 
 
 }
@@ -152,7 +149,7 @@ int main() {
     
 
     pthread_t thread_id[2];
-    while (WriteCNT < PD){
+    while (WriteCNT < PN){
         // initialize lock
         if (pthread_mutex_init(&lock, NULL) != 0) {
             printf("\n mutex init has failed\n");
