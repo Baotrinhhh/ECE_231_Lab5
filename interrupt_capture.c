@@ -53,83 +53,85 @@ void* inputThread(void* var) {
     struct epoll_event ev_wait;
     sleep(1);
 
-    // Critical Section - Start 
-    pthread_mutex_lock(&lock);
-
-    // Handle synchronize error if output thread could not acquire mutex before input thread
-    while (cnt == 10){
+    while (WriteCNT < PN){
+        // Critical Section - Start 
         pthread_mutex_lock(&lock);
-        pthread_mutex_unlock(&lock);
-    }
 
-    while (cnt < 10) {
-        int ret = epoll_wait(epfd, &ev_wait, 1, -1);
-
-        // if there is not rising edge
-        if (ret < 0) {
-              perror("epoll_wait failed");
-              continue;
-         }
-         
-        // if capture rising edge
-        if (ret > 0){
-            // Capture the current timestamp and thread id
-            clock_gettime(CLOCK_MONOTONIC_RAW, &buffer[InputIDX].timestamp);
-            buffer[InputIDX].thread_id = pthread_self();
-            cnt ++;
-            InputIDX++;
+        // Handle synchronize error if output thread could not acquire mutex before input thread
+        while (cnt == 10){
+            pthread_mutex_lock(&lock);
+            pthread_mutex_unlock(&lock);
         }
 
-        if (InputIDX == SIZE) {
-            InputIDX = 0;
+        while (cnt < 10) {
+            int ret = epoll_wait(epfd, &ev_wait, 1, -1);
+            // if there is not rising edge
+            if (ret < 0) {
+                perror("epoll_wait failed");
+                continue;
             }
-    }
-    // Critical Section - End 
-    pthread_mutex_unlock(&lock); 
+            
+            // if capture rising edge
+            if (ret > 0){
+                // Capture the current timestamp and thread id
+                clock_gettime(CLOCK_MONOTONIC_RAW, &buffer[InputIDX].timestamp);
+                buffer[InputIDX].thread_id = pthread_self();
+                cnt ++;
+                InputIDX++;
+            }
 
+            if (InputIDX == SIZE) {
+                InputIDX = 0;
+                }
+        }
+        // Critical Section - End 
+        pthread_mutex_unlock(&lock); 
+    }
     close(epfd);
     fclose(fp);
 }
-
-    // Define output thread
+   
+// Define output thread
 void outputThread(void * var){
     // Taking the argument
     char* input = (char*) var;
-    FILE* txt = fopen(input, "r+");
+    FILE* txt = fopen(input, "a");
 
     if (txt == NULL) {
         perror("Failed to open text file");
         pthread_exit(NULL);
     }
-
-    // Critical Section - Start 
-    pthread_mutex_lock(&lock);
-
-    while (cnt > 0){
-        // Write to text file
-        fprintf(txt, "%ld\t%ld\t%lu\n", 
-            buffer[InputIDX].timestamp.tv_sec, 
-            buffer[InputIDX].timestamp.tv_nsec,
-            (unsigned long)buffer[InputIDX].thread_id);
-
-        // Print to terminal
-        printf("%ld\t%ld\t%lu\n", buffer[InputIDX].timestamp.tv_sec, 
-            buffer[InputIDX].timestamp.tv_nsec,
-            (unsigned long)buffer[InputIDX].thread_id);
-        cnt--;
-        InputIDX++;
-        WriteCNT++;
-    
-    if (InputIDX == SIZE) {
-        InputIDX = 0;
+    while (WriteCNT < PN){
+        // Critical Section - Start 
+        pthread_mutex_lock(&lock);
+        while (cnt == 0){
+            pthread_mutex_lock(&lock);
+            pthread_mutex_unlock(&lock);            
         }
+        while (cnt > 0){
+            // Write to text file
+            fprintf(txt, "%ld\t%ld\t%lu\n", 
+                buffer[InputIDX].timestamp.tv_sec, 
+                buffer[InputIDX].timestamp.tv_nsec,
+                (unsigned long)buffer[InputIDX].thread_id);
+
+            // Print to terminal
+            printf("%ld\t%ld\t%lu\n", buffer[InputIDX].timestamp.tv_sec, 
+                buffer[InputIDX].timestamp.tv_nsec,
+                (unsigned long)buffer[InputIDX].thread_id);
+            cnt--;
+            InputIDX++;
+            WriteCNT++;
+
+            if (InputIDX == SIZE) {
+                InputIDX = 0;
+                }
+        }
+
+        // Critical Section - End 
+        pthread_mutex_unlock(&lock); 
     }
-    
-    // Critical Section - End 
-    pthread_mutex_unlock(&lock); 
     fclose(txt);
-
-
 }
 
 
@@ -146,20 +148,18 @@ int main() {
     char InterruptPath[40];
     sprintf(InterruptPath, "/sys/class/gpio/gpio%d/value", gpio_number);
 
+    if (pthread_mutex_init(&lock, NULL) != 0) {
+        printf("\n mutex init has failed\n");
+        return 1;
+    }
     
-
     pthread_t thread_id[2];
-    while (WriteCNT < PN){
-        // initialize lock
-        if (pthread_mutex_init(&lock, NULL) != 0) {
-            printf("\n mutex init has failed\n");
-            return 1;
-        pthread_create(&(thread_id[0]), NULL, outputThread, (void*)(&InterruptPath) );
-        pthread_create(&(thread_id[1]), NULL, inputThread, (void*)(&TEXT));
-        pthread_join(thread_id[0], NULL);
-        pthread_join(thread_id[1], NULL);
-        pthread_mutex_destroy(&lock); //Uninitialize Lock
-        pthread_exit(0);
-    }
-    }
+    // initialize lock
+
+    pthread_create(&(thread_id[0]), NULL, outputThread, (void*)(&InterruptPath) );
+    pthread_create(&(thread_id[1]), NULL, inputThread, (void*)(&TEXT));
+    pthread_join(thread_id[0], NULL);
+    pthread_join(thread_id[1], NULL);
+    pthread_mutex_destroy(&lock); //Uninitialize Lock
+    pthread_exit(0);
 }
