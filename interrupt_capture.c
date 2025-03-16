@@ -16,9 +16,11 @@ struct data_type {
 
 struct data_type buffer[SIZE];
 
-int InputIDX = 0;
+int put_idx = 0;
+int get_idx = 0;
 int cnt = 0;
 int WriteCNT = 0;
+
 pthread_mutex_t lock;
 
 // Define input Thread
@@ -57,13 +59,7 @@ void* inputThread(void* var) {
         // Critical Section - Start 
         pthread_mutex_lock(&lock);
 
-        // Handle synchronize error if output thread could not acquire mutex before input thread
-        while (cnt == 10){
-            pthread_mutex_lock(&lock);
-            pthread_mutex_unlock(&lock);
-        }
-
-        while (cnt < 10) {
+        while (cnt < SIZE) {
             int ret = epoll_wait(epfd, &ev_wait, 1, -1);
             // if there is not rising edge
             if (ret < 0) {
@@ -73,15 +69,18 @@ void* inputThread(void* var) {
             
             // if capture rising edge
             if (ret > 0){
+                // Reset file pointer if required to clear the interrupt:
+                fseek(fp, 0, SEEK_SET);
+
                 // Capture the current timestamp and thread id
-                clock_gettime(CLOCK_MONOTONIC_RAW, &buffer[InputIDX].timestamp);
-                buffer[InputIDX].thread_id = pthread_self();
+                clock_gettime(CLOCK_MONOTONIC, &buffer[put_idx].timestamp);
+                buffer[put_idx].thread_id = pthread_self();
                 cnt ++;
-                InputIDX++;
+                put_idx++;
             }
 
-            if (InputIDX == SIZE) {
-                InputIDX = 0;
+            if (put_idx == SIZE) {
+                put_idx = 0;
                 }
         }
         // Critical Section - End 
@@ -92,7 +91,7 @@ void* inputThread(void* var) {
 }
    
 // Define output thread
-void outputThread(void * var){
+void* outputThread(void * var){
     // Taking the argument
     char* input = (char*) var;
     FILE* txt = fopen(input, "a");
@@ -104,27 +103,24 @@ void outputThread(void * var){
     while (WriteCNT < PN){
         // Critical Section - Start 
         pthread_mutex_lock(&lock);
-        while (cnt == 0){
-            pthread_mutex_lock(&lock);
-            pthread_mutex_unlock(&lock);            
-        }
+
         while (cnt > 0){
             // Write to text file
             fprintf(txt, "%ld\t%ld\t%lu\n", 
-                buffer[InputIDX].timestamp.tv_sec, 
-                buffer[InputIDX].timestamp.tv_nsec,
-                (unsigned long)buffer[InputIDX].thread_id);
+                buffer[get_idx].timestamp.tv_sec, 
+                buffer[get_idx].timestamp.tv_nsec,
+                (unsigned long)buffer[get_idx].thread_id);
 
             // Print to terminal
-            printf("%ld\t%ld\t%lu\n", buffer[InputIDX].timestamp.tv_sec, 
-                buffer[InputIDX].timestamp.tv_nsec,
-                (unsigned long)buffer[InputIDX].thread_id);
+            printf("%ld\t%ld\t%lu\n", buffer[get_idx].timestamp.tv_sec, 
+                buffer[get_idx].timestamp.tv_nsec,
+                (unsigned long)buffer[get_idx].thread_id);
             cnt--;
-            InputIDX++;
+            get_idx++;
             WriteCNT++;
 
-            if (InputIDX == SIZE) {
-                InputIDX = 0;
+            if (get_idx == SIZE) {
+                get_idx = 0;
                 }
         }
 
@@ -136,7 +132,8 @@ void outputThread(void * var){
 
 
 int main() {
-    const char *TEXT = "/home/debian/Lab5/Bao_Trinh_data.txt";
+    char *TEXT = "/home/debian/Lab5/Bao_Trinh_data.txt";
+    remove(TEXT); // Delete if it exists for fresh start
 
     char gpio_pin_number[32] = "P8_09";
     int gpio_number = 69;
@@ -155,9 +152,8 @@ int main() {
     
     pthread_t thread_id[2];
     // initialize lock
-
-    pthread_create(&(thread_id[0]), NULL, outputThread, (void*)(&InterruptPath) );
-    pthread_create(&(thread_id[1]), NULL, inputThread, (void*)(&TEXT));
+    pthread_create(&(thread_id[1]), NULL, inputThread, (void*)InterruptPath);
+    pthread_create(&(thread_id[0]), NULL, outputThread, (void*)TEXT);
     pthread_join(thread_id[0], NULL);
     pthread_join(thread_id[1], NULL);
     pthread_mutex_destroy(&lock); //Uninitialize Lock
